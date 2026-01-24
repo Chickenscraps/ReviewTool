@@ -1,5 +1,5 @@
 [build]
-  command = "pnpm --filter @tobie/web... build"
+  command = "npx prisma db push --schema=apps/web/prisma/schema.prisma && pnpm --filter @tobie/web... build"
   publish = "apps/web/.next"
 
 [dev]
