@@ -1,5 +1,5 @@
 [build]
-  command = "pnpm build"
+  command = "pnpm --filter @tobie/web build"
   publish = "apps/web/.next"
 
 [dev]
