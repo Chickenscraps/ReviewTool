@@ -23,6 +23,9 @@ export class GeminiProvider implements LLMProvider {
         }));
 
         const lastMsg = messages[messages.length - 1];
+        if (!lastMsg) {
+            return ''; // Handle empty message case
+        }
 
         const chat = model.startChat({
             history: history,
@@ -77,6 +80,8 @@ export class GeminiProvider implements LLMProvider {
         });
 
         const lastMsg = messages[messages.length - 1];
+        if (!lastMsg) return;
+
         const result = await chat.sendMessageStream(lastMsg.content);
 
         for await (const chunk of result.stream) {
