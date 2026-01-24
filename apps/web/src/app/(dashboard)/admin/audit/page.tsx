@@ -48,7 +48,7 @@ export default async function AdminAuditPage() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                        {logs.map((log) => (
+                        {logs.map((log: any) => (
                             <tr key={log.id} className="hover:bg-white/5 transition-colors">
                                 <td className="px-6 py-4 text-sm text-gray-400 whitespace-nowrap">
                                     {new Date(log.timestamp).toLocaleString()}
