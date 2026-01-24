@@ -26,7 +26,7 @@ export default async function AdminRolesPage() {
     ]);
 
     // Group permissions by category
-    const permissionsByCategory = permissions.reduce((acc, perm) => {
+    const permissionsByCategory = permissions.reduce((acc: Record<string, typeof permissions>, perm) => {
         if (!acc[perm.category]) {
             acc[perm.category] = [];
         }
