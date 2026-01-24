@@ -1,0 +1,283 @@
+﻿Architectural Forensics and Strategic Roadmap for the Tobie Command Center
+1. Executive Technical Thesis: The Viability of the "AntiGravity" Stack
+The ambition to engineer the "Tobie Dashboard"—codenamed "AntiGravity"—represents a convergence of three distinct software paradigms: the stateless efficiency of modern web frameworks, the stateful complexity of non-linear video editing, and the probabilistic reasoning of agentic artificial intelligence. The proposed technology stack, comprising Next.js 15 (App Router), Prisma v7, Netlify Serverless Functions, and Google’s Gemini 3 models, sits at the bleeding edge of the 2026 web development ecosystem. A rigorous forensic analysis of this architecture reveals a duality: while the individual components are industry-leading, their integration within a serverless monorepo context creates a high-friction environment susceptible to brittle deployment failures and runtime latency issues.
+The immediate critical failure—a persistent "500 Server Error" following administrative login—is not merely a configuration oversight but a symptom of a fundamental misalignment between the runtime expectations of Next.js 15's Server Actions and the execution constraints of Netlify's standard serverless environment.1 Furthermore, the requirement to support "robust backend file management" and "video review with drawing annotations" imposes heavy I/O and synchronization demands that challenge the ephemeral nature of Function-as-a-Service (FaaS) architectures.
+Despite these initial friction points, the research indicates that this stack remains the optimal route for long-term scalability, provided specific architectural deviations are implemented. The combination of Next.js 15’s React Server Components (RSC) significantly reduces client-side JavaScript execution, a non-negotiable requirement for the "mobile-first" performance mandated by the project vision.4 Prisma provides the necessary type safety for complex relational data modeling (users, projects, assets, annotations), and Gemini 3’s "Thinking Mode" offers the reasoning depth required to semi-autonomously enforce contractual scope.5 However, the deployment strategy must evolve from a standard Netlify configuration to a hybrid approach that offloads long-running processes—such as video transcoding and deep AI reasoning—to specialized asynchronous workers or edge-compatible storage layers like Supabase.
+This report serves as a comprehensive architectural blueprint. It deconstructs the current deployment failures, creates a physics-based implementation plan for the video annotation engine, and designs the "Scope Guardian" AI agent using the latest Gemini 3 primitives.
+________________
+2. Forensic Analysis: Deconstructing the "Server Error"
+The immediate impediment to the "AntiGravity" MVP is a catastrophic "500 Internal Server Error" occurring immediately after the admin login sequence. This error effectively blocks all access to the dashboard. By synthesizing data from deployment logs, community issue trackers, and framework documentation, we can definitively attribute this failure to a "Triad of Incompatibility" involving NextAuth.js v5 encryption requirements, Prisma binary resolution in serverless monorepos, and Netlify’s environment variable injection logic.
+2.1 The Cryptographic Void: NextAuth v5 and AUTH_SECRET
+NextAuth.js v5 (Auth.js) introduced a strict security architecture that mandates the presence of a cryptographically secure secret key for token encryption. In local development environments, the framework often falls back to a development default or reads silently from a .env.local file. However, in a production serverless environment like Netlify, this fallback mechanism is disabled to prevent insecure deployments.7
+The "Server Error" manifests because the authentication handshake fails to locate the AUTH_SECRET environment variable during the JSON Web Token (JWT) generation phase. Unlike previous versions which might have thrown a clear configuration error, the v5 beta interaction with Next.js Server Actions often results in a silent crash of the API route, returning a generic 500 status code to the client. This is frequently compounded by the absence of the AUTH_TRUST_HOST variable. When deployed behind a proxy (which Netlify uses for its Edge Network), Auth.js requires explicit confirmation to trust the X-Forwarded-Host headers. Without AUTH_TRUST_HOST=true, the callback verification fails, terminating the session creation process abruptly.1
+2.2 The Binary Phantom: Prisma in the Monorepo
+The second, and technically more insidious, cause of the server error lies in the interaction between Prisma ORM and Netlify’s build system ("zip-it-and-ship-it"). Prisma relies on a Rust-based Query Engine binary to communicate with the PostgreSQL database. This binary is OS-specific.
+* Build-Time vs. Run-Time Mismatch: The build process likely occurs in a containerized environment (e.g., standard Linux), generating a binary compatible with that build image. However, Netlify Functions execute in an Amazon Linux 2 or Amazon Linux 2023 environment, which requires specific OpenSSL libraries. If the schema.prisma configuration does not explicitly target the rhel-openssl-3.0.x platform, the deployed function attempts to spawn a binary that is either missing or incompatible with the runtime OS.9
+* Monorepo Hoisting: The project utilizes a pnpm monorepo structure. In this setup, dependencies are "hoisted" to the root node_modules directory to save disk space. Netlify’s dependency tracer frequently fails to identify the location of the Prisma binary when it resides deep within the .pnpm store rather than in the function's local node_modules folder. Consequently, the bundler "tree-shakes" the binary out of the final deployment artifact. When the Next.js API route attempts to instantiate new PrismaClient(), it fails to find the engine file, causing the Node.js process to crash immediately.12
+2.3 The Environment Injection Latency
+A tertiary factor identified in Next.js 15 deployments on Netlify involves the timing of environment variable injection. Next.js 15 optimizes static generation aggressively. If environment variables (like DATABASE_URL or GEMINI_API_KEY) are not available at build time (due to being set only for runtime), the static generation of pages may bake in undefined values, leading to hydration errors or server-side crashes when those pages are accessed.
+2.4 Multi-Phase Remediation Plan
+To resolve the "Server Error" and stabilize the authentication flow, the following engineering steps must be executed. This is not a patch but a configuration realignment.
+Phase 1: Hardening the Authentication Configuration
+The first step addresses the cryptographic requirements of NextAuth v5.
+1. Generate a High-Entropy Secret: Use openssl rand -base64 32 to generate a secure string.
+2. Configure Netlify Environment Variables: Navigate to Site Settings > Build & Deploy > Environment and set:
+   * AUTH_SECRET: The generated string.
+   * AUTH_TRUST_HOST: true.
+   * AUTH_URL: The exact production URL (e.g., https://tobie-dashboard.netlify.app). Crucial: Ensure there is NO trailing slash, as this breaks route matching.14
+Phase 2: Enforcing Binary Compatibility
+This phase ensures the Prisma engine is compatible with the AWS Lambda runtime used by Netlify.
+Modify packages/database/prisma/schema.prisma:
+
+
+Code snippet
+
+
+
+
+generator client {
+ provider      = "prisma-client-js"
+ // Target the specific OpenSSL version used by AWS Lambda (Netlify Functions)
+ // 'native' is for local dev, 'rhel-openssl-3.0.x' is for production
+ binaryTargets = ["native", "rhel-openssl-3.0.x"]
+ // Output to a standard location to aid bundling
+ output        = "../generated/client"
+}
+
+Phase 3: Monorepo Bundling Strategy
+This step forces Netlify’s bundler to include the critical binary files that are often lost during tree-shaking.
+Create/Update netlify.toml in the project root:
+
+
+Ini, TOML
+
+
+
+
+[build]
+ command = "pnpm --filter @tobie/web db:generate && pnpm turbo run build --filter=@tobie/web"
+ publish = "apps/web/.next"
+
+[functions]
+ # Explicitly tell Netlify to bundle Prisma and the adapter
+ external_node_modules = ["@prisma/client", "prisma", "@auth/prisma-adapter"]
+ # Force inclusion of the generated binary file
+ included_files = ["node_modules/.prisma/client/libquery_engine-rhel-openssl-3.0.x.so.node"]
+
+Phase 4: Dependency Hoisting
+To resolve the pnpm symlink issues, configure the root .npmrc to use public hoisting. This makes the dependency tree flatter and more intelligible to the Netlify build bot.
+Update .npmrc:
+
+
+Ini, TOML
+
+
+
+
+shamefully-hoist=true
+public-hoist-pattern=*prisma*
+public-hoist-pattern=*@prisma*
+
+________________
+3. Architecture Deep Dive: The Video Review Engine
+The requirement to implement "video review with drawing annotations" transforms the dashboard from a standard CRUD application into a complex multimedia workstation. The challenge lies in synchronizing three distinct layers: the temporal state of the video, the spatial state of the drawing canvas, and the persistent state of the database. The research strongly suggests that a naive implementation using standard HTML5 Canvas will fail to meet the "robust" requirement due to lack of object editing capabilities.
+3.1 Technology Selection: Fabric.js vs. Konva vs. Native Canvas
+Comparative analysis of the JavaScript canvas ecosystem identifies Fabric.js as the superior engine for this specific use case, outperforming both Konva and raw Canvas API implementations.
+
+
+Feature
+	Fabric.js
+	Konva
+	Native Canvas
+	Suitability Verdict
+	Object Model
+	Vector-based object model. Annotations exist as objects (Rect, Path) that can be selected, moved, and resized after drawing.
+	Scene graph based. Good for hierarchies but less intuitive for "document" style editing.
+	Raster-based. Once drawn, pixels are fused. Editing requires clearing and redrawing.
+	Fabric.js is essential for allowing clients to tweak their annotations.
+	Serialization
+	Native toJSON() and toSVG() methods. Saves drawings as structured metadata, not heavy image blobs.
+	JSON serialization exists but is often tied to the specific view state.
+	Requires manual serialization logic or saving as base64 images (high storage cost).
+	Fabric.js allows efficient storage in Postgres JSONB columns.
+	Events
+	Robust event handling for objects (click, hover, modify).
+	Strong event support, optimized for high-performance gaming/animation.
+	Basic DOM events only; object detection requires complex math.
+	Fabric.js simplifies the "select to delete" workflow.
+	Video Overlay
+	Proven patterns for transparent overlays.15
+	Can be used as overlay but React bindings (react-konva) can be verbose for simple static overlays.
+	Lightweight but requires building the entire interaction engine from scratch.
+	Fabric.js offers the best balance of power and implementation speed.
+	3.2 The Synchronization Physics: Time-Buckets and Render Loops
+HTML5 Video does not natively support "frames." It operates on a floating-point currentTime property. This creates a synchronization challenge: how do we attach a drawing to "Frame 1024" when the browser only knows "Time 42.66667s"?
+3.2.1 The Time-Bucket Algorithm
+To simulate frame-accurate annotation, the system must implement a quantization strategy. We define a "Time Bucket" derived from the video's frame rate (e.g., 24fps = ~0.041s bucket size).
+1. Quantization: BucketID = Math.floor(video.currentTime * FrameRate)
+2. Storage: Annotations are stored in the database associated with a specific BucketID and FrameRate.
+3. Playback: During playback, the system calculates the current bucket. If the bucket changes, it queries the local state for annotations matching the new bucket and renders them.
+3.2.2 The "RequestAnimationFrame" Sync Loop
+Using a standard useEffect interval is insufficient for video synchronization due to drift. The implementation must utilize requestAnimationFrame to tightly couple the canvas rendering to the browser's repaint cycle.16
+* The Loop Logic:
+JavaScript
+const loop = () => {
+ if (video.paused) return;
+ const currentBucket = Math.floor(video.currentTime * 24);
+ if (currentBucket!== lastBucket) {
+   renderAnnotationsForBucket(currentBucket);
+   lastBucket = currentBucket;
+ }
+ requestAnimationFrame(loop);
+};
+
+This loop ensures that drawing overlays appear and disappear in sync with the moving video, maintaining the illusion of "drawing on the video."
+3.3 The Responsive Overlay Challenge
+A critical UX requirement is responsiveness. The video player will resize based on the browser window, but the HTML Canvas has absolute pixel dimensions. If a user draws a circle on a 1080p screen, it must appear in the correct relative position on a 720p tablet screen.
+The Fabric.js Solution:
+   1. Base Reference: Store all annotations relative to the original video resolution (e.g., 1920x1080).
+   2. Resize Observer: Attach a ResizeObserver to the video container.17
+   3. Dynamic Scaling: When the container resizes, calculate a scaling factor: Scale = CurrentWidth / BaseWidth.
+   4. Zoom Transformation: Apply canvas.setZoom(Scale) and canvas.setDimensions({ width: CurrentWidth, height: CurrentHeight }). This creates a coordinate system transform where the drawing data remains constant, but the viewport scales automatically to match the video element.18
+3.4 Data Schema for Annotations
+To support this architecture, the database schema must be extended. The use of a JSON type for canvasData enables the storage of the complex Fabric.js object model without rigid schema constraints, allowing for future feature expansion (e.g., adding colors, layers, or text) without database migrations.
+
+
+Code snippet
+
+
+
+
+model VideoAnnotation {
+ id          String   @id @default(cuid())
+ assetId     String
+ bucketIndex Int      // The quantized time bucket
+ timeCode    Float    // Exact timestamp for reference
+ canvasData  Json     // Serialized Fabric.js object
+ authorId    String
+ createdAt   DateTime @default(now())
+ 
+ asset       Asset    @relation(fields: [assetId], references: [id])
+ author      User     @relation(fields: [authorId], references: [id])
+
+ @@index([assetId, bucketIndex]) // High-performance lookup during playback
+}
+
+________________
+4. Architecture Deep Dive: The AI Scope Guardian
+The integration of Google’s Gemini 3 transforms the dashboard from a passive management tool into an active "Scope Guardian." This feature addresses the pervasive agency problem of "scope creep" by using AI to audit client requests against the Statement of Work (SOW).
+4.1 The Gemini 3 Reasoning Engine
+Standard Large Language Models (LLMs) often struggle with strict rule adherence, prone to being "charmed" by user requests into hallucinating approvals. Gemini 3, specifically the variants equipped with "Thinking Mode," introduces a cognitive decoupling where the model generates a hidden chain-of-thought before producing a final response. This reasoning capability is non-negotiable for analyzing legal text like SOWs.5
+Thinking Mode Configuration:
+The API implementation must explicitly configure the thinking_level parameter.
+   * Parameter: thinking_level="HIGH"
+   * Function: This forces the model to allocate maximum compute tokens to internal verification. It allows the model to "read" the SOW, "read" the user request, "deliberate" on the conflict, and only then formulate a response. This significantly reduces the false-positive rate where an AI might accidentally approve an out-of-scope request.6
+4.2 The "Thought Signature" Audit Trail
+A unique feature of Gemini 3 is the "Thought Signature"—an encrypted token representing the model's reasoning trace. In a multi-turn conversation (e.g., a client arguing why a change should be in scope), maintaining context is critical.
+   * Mechanism: When the model responds, it returns a thought_signature.
+   * Requirement: The backend must store this signature in the ChatTranscript table. In the next turn of the conversation, this signature must be passed back to the API. Failure to do so breaks the reasoning chain, causing the model to "forget" its previous logic.19
+4.3 The Scope Ingestion Pipeline
+The AI cannot check scope if it doesn't understand the contract. We propose a specific ingestion pipeline:
+   1. Upload: Admin uploads the PDF contract.
+   2. Extraction: Gemini 1.5 Pro (chosen for its massive 1M+ token window) ingests the entire PDF.
+   3. Structuring: The model is prompted to extract a structured Scope Definition JSON:
+JSON
+{
+ "deliverables":,
+ "constraints":,
+ "out_of_scope": ["Original music composition", "On-set supervision"]
+}
+
+   4. Context Injection: This structured definition is injected into the System Instruction of the Gemini 3 Scope Guardian during every user interaction.
+4.4 System Instruction Design
+The effectiveness of the AI depends heavily on the System Instruction (System Prompt). Research into "Prompt Evaluation" suggests a rigid, role-based instruction set.21
+System Instruction: "You are the Scope Guardian for Project [Name]. Your goal is to strictly enforce the SOW. You have access to the Scope Definition. When a user requests a task, compare it against the 'Deliverables' and 'Constraints'.
+      1. If the request is explicitly 'out_of_scope', REJECT it politely and flag for admin review.
+      2. If the request is ambiguous, ASK for clarification.
+      3. If the request is valid, CONFIRM it.
+Never promise work that is not explicitly in the 'Deliverables' list."
+________________
+5. Architecture Deep Dive: Backend File Management & Sync
+The requirement for "backend file management" involves handling gigabyte-scale video assets. This requires a robust architecture that bypasses the limitations of the Next.js server.
+5.1 The Virtual File System (VFS)
+To present a "directory" structure to the user without managing physical folders on a disk, the system implements a Virtual File System in the PostgreSQL database.
+         * Schema Pattern: The Adjacency List pattern is the most efficient for this use case, allowing for infinite nesting of folders.22
+Code snippet
+model FileNode {
+ id        String     @id @default(cuid())
+ name      String
+ parentId  String?    // Points to parent folder
+ isFolder  Boolean
+ storageId String?    // Reference to Supabase Storage object (files only)
+ parent    FileNode?  @relation("FolderHierarchy", fields: [parentId], references: [id])
+ children  FileNode @relation("FolderHierarchy")
+}
+
+         * Benefits: This allows the UI to render a file tree instantly using a single recursive database query (Recursive CTE), decoupling the UI structure from the flat object storage bucket structure.23
+5.2 Supabase Storage & TUS Protocol
+Uploading a 2GB video file via a standard Next.js API route will trigger the 26-second timeout on Netlify immediately. The solution is Direct-to-Storage Resumable Uploads.
+            * The TUS Protocol: Supabase Storage supports the TUS open protocol for resumable file uploads.
+            * Workflow:
+            1. Client requests a signed upload URL from the Next.js API (authentication check).
+            2. Client utilizes tus-js-client to upload the file directly to the Supabase bucket in chunks.
+            3. If the connection drops, the upload resumes automatically.
+            4. Upon completion, the client triggers a webhook to create the FileNode record in the database. This architecture completely bypasses the Netlify server constraints, ensuring scalability for massive media assets.24
+5.3 The Desktop Agent (Tauri)
+For the "local file indexing" requirement, Tauri is the correct architectural choice over Electron. It uses the OS's native webview (WebView2 on Windows, WebKit on macOS), resulting in a binary size of ~3MB vs. Electron's ~100MB.4
+            * Sync Logic: The Tauri app runs a Rust-based file watcher (notify crate). When a file is added to the local "Tobie" folder:
+            1. The agent calculates a Blake3 hash of the file.
+            2. It checks the cloud database (via API) for this hash.
+            3. If the file doesn't exist, it creates a FileNode metadata record marked as "Local Only."
+            4. The file is not uploaded automatically to save bandwidth. It waits for a user to click "Sync" in the dashboard.
+________________
+6. Comprehensive Implementation Roadmap
+Phase 1: Foundation Stabilization (Week 1-2)
+Goal: Eliminate the "Server Error" and secure the environment.
+            1. Environment Audit: Configure AUTH_SECRET, AUTH_TRUST_HOST, and AUTH_URL (sanitized) in Netlify.
+            2. Binary Fix: Update schema.prisma with binaryTargets = ["rhel-openssl-3.0.x"] and configure netlify.toml to force bundle inclusion.
+            3. Deployment Verification: Deploy a "Health Check" API route to verify Prisma-to-Supabase connectivity in the production environment.
+Phase 2: Core Video Infrastructure (Week 3-4)
+Goal: Enable video playback with synchronized annotations.
+            1. Component Build: Develop the VideoAnnotationPlayer using react-player and fabric.js. Implement the ResizeObserver logic for responsive overlay scaling.
+            2. Sync Engine: Implement the requestAnimationFrame render loop and the time-bucket quantization logic.
+            3. Backend Integration: Create the VideoAnnotation table and API endpoints. Implement the serialization/deserialization flow for Fabric.js objects.
+Phase 3: File System & Uploads (Week 5-6)
+Goal: Enable robust file management for large assets.
+            1. VFS Schema: Implement the Adjacency List schema in Postgres and the recursive queries for the UI file tree.
+            2. Storage Pipeline: Configure Supabase Storage buckets. Implement the TUS client in the frontend for resumable direct uploads.
+            3. Transcoding: Set up a Supabase Edge Function to trigger on video upload, using FFMPEG (via a third-party service or container) to generate proxy files for smooth web playback.
+Phase 4: Intelligence Integration (Week 7-8)
+Goal: Deploy the Scope Guardian.
+            1. Ingestion: Build the PDF parsing pipeline using Gemini 1.5 Pro.
+            2. Guardian API: Create the chat interface using Gemini 3. Configure thinking_level="HIGH" and implement the "Thought Signature" persistence layer.
+            3. Desktop Bridge: Initialize the Tauri app (sharing the Next.js web code) and build the Rust file watcher service.
+________________
+7. Strategic Conclusion
+The "AntiGravity" dashboard is a sophisticated application that pushes the boundaries of the JAMstack. The analysis confirms that the Next.js 15 + Prisma + Netlify + Gemini stack is functionally capable of delivering the vision, but it is currently misconfigured for the specific constraints of serverless deployment. The "Server error" is a configuration artifact, not a terminal flaw in the technology choice.
+However, a critical strategic pivot is recommended: if the project anticipates heavy AI "thinking" phases exceeding 26 seconds, the backend API routes should be migrated to Vercel (which supports longer durations) or Railway (persistent containers), while keeping the frontend on Netlify.
+For the immediate term, sticking with Netlify is viable if the remediation steps in Phase 1 are executed precisely. The addition of Fabric.js for annotations and Gemini 3 for reasoning will create a best-in-class, differentiated product that solves the dual problems of "messy feedback" and "scope creep" effectively. The roadmap provided transitions the project from a "broken prototype" to a resilient, enterprise-grade platform.
+Works cited
+            1. 500 Internal Server Error on /api/auth/signin, cannot access login page on live site · nextauthjs next-auth · Discussion #3737 - GitHub, accessed January 24, 2026, https://github.com/nextauthjs/next-auth/discussions/3737
+            2. Build Failed on Next.js 15.2.3 App Router - "invalid GET export" in API route, accessed January 24, 2026, https://answers.netlify.com/t/build-failed-on-next-js-15-2-3-app-router-invalid-get-export-in-api-route/155575
+            3. 500 Internal Server Error with NextJS - Netlify Support Forums, accessed January 24, 2026, https://answers.netlify.com/t/500-internal-server-error-with-nextjs/105125
+            4. Project Management Dashboard with Integrated AI – Comprehensive Plan.txt
+            5. Gemini 3 Pro Preview – Vertex AI - Google Cloud Console, accessed January 24, 2026, https://console.cloud.google.com/vertex-ai/publishers/google/model-garden/gemini-3-pro-preview
+            6. Thinking | Generative AI on Vertex AI - Google Cloud Documentation, accessed January 24, 2026, https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thinking
+            7. Migrating to v5 - Auth.js, accessed January 24, 2026, https://authjs.dev/getting-started/migrating-to-v5
+            8. Error: no matching decryption secret · Issue #10633 · nextauthjs/next-auth - GitHub, accessed January 24, 2026, https://github.com/nextauthjs/next-auth/issues/10633
+            9. Deploy to Vercel | Prisma Documentation, accessed January 24, 2026, https://www.prisma.io/docs/orm/prisma-client/deployment/serverless/deploy-to-vercel
+            10. New Builds are breaking in runtime with Prisma errors - Netlify Support Forums, accessed January 24, 2026, https://answers.netlify.com/t/new-builds-are-breaking-in-runtime-with-prisma-errors/107755
+            11. Deploy to Netlify | Prisma Documentation, accessed January 24, 2026, https://www.prisma.io/docs/orm/prisma-client/deployment/serverless/deploy-to-netlify
+            12. Error: Cannot find module '@prisma/client' in netlify functions when using prisma + next + rushjs + pnpm · Issue #636 - GitHub, accessed January 24, 2026, https://github.com/netlify/zip-it-and-ship-it/issues/636
+            13. User questions: Engine not found (bundler) · prisma prisma · Discussion #19499 - GitHub, accessed January 24, 2026, https://github.com/prisma/prisma/discussions/19499
+            14. NextJS next-auth 500 Internal Server Error when trying to login (Netlify) - Stack Overflow, accessed January 24, 2026, https://stackoverflow.com/questions/76393861/nextjs-next-auth-500-internal-server-error-when-trying-to-login-netlify
+            15. Video element - Fabric.js, accessed January 24, 2026, https://fabricjs.com/demos/video-element/
+            16. Extract frames from specific times from video - Stack Overflow, accessed January 24, 2026, https://stackoverflow.com/questions/52985234/extract-frames-from-specific-times-from-video
+            17. Building a responsive camera component with React Hooks - LogRocket Blog, accessed January 24, 2026, https://blog.logrocket.com/responsive-camera-component-react-hooks/
+            18. html5 canvas - How to enable responsive design for Fabric.js - Stack Overflow, accessed January 24, 2026, https://stackoverflow.com/questions/21931271/how-to-enable-responsive-design-for-fabric-js
+            19. Thought Signatures | Gemini API | Google AI for Developers, accessed January 24, 2026, https://ai.google.dev/gemini-api/docs/thought-signatures
+            20. Thought signatures | Generative AI on Vertex AI - Google Cloud Documentation, accessed January 24, 2026, https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+            21. (PDF) ECLIPTICA - A Framework for Switchable LLM Alignment via CITA - Contrastive Instruction-Tuned Alignment - ResearchGate, accessed January 24, 2026, https://www.researchgate.net/publication/399733998_ECLIPTICA_-_A_Framework_for_Switchable_LLM_Alignment_via_CITA_-_Contrastive_Instruction-Tuned_Alignment
+            22. From Trees to Tables: Storing Hierarchical Data in Relational Databases | by Rishabh Dev Manu | Medium, accessed January 24, 2026, https://medium.com/@rishabhdevmanu/from-trees-to-tables-storing-hierarchical-data-in-relational-databases-a5e5e6e1bd64
+            23. Implementing Hierarchical Data Structures in PostgreSQL: LTREE vs Adjacency List vs Closure Table - DEV Community, accessed January 24, 2026, https://dev.to/dowerdev/implementing-hierarchical-data-structures-in-postgresql-ltree-vs-adjacency-list-vs-closure-table-2jpb
+            24. Timeout when posting large file data to external API using a proxy (rewrite) - Support, accessed January 24, 2026, https://answers.netlify.com/t/timeout-when-posting-large-file-data-to-external-api-using-a-proxy-rewrite/41387

@@ -2,7 +2,8 @@
 // Database: SQLite (local dev) / PostgreSQL (production)
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -39,6 +40,7 @@ model User {
   createdVideos   VideoAsset[]   @relation("CreatedVideos")
   videoComments   VideoComment[] @relation("AuthoredComments")
   resolvedComments VideoComment[] @relation("ResolvedComments")
+  annotations VideoAnnotation[]
 
   @@index([email])
   @@index([roleId])
@@ -351,6 +353,7 @@ model VideoAsset {
   updatedAt    DateTime       @updatedAt
   // Relations
   comments     VideoComment[]
+  annotations VideoAnnotation[]
 
   @@unique([projectId, version])
   @@index([projectId])
@@ -378,5 +381,36 @@ model VideoComment {
   @@index([authorId])
   @@index([timestamp])
   @@index([resolved])
+}
+
+model VideoAnnotation {
+  id          String   @id @default(cuid())
+  assetId     String
+  bucketIndex Int      // The quantized time bucket
+  timeCode    Float    // Exact timestamp for reference
+  canvasData  Json     // Serialized Fabric.js object
+  authorId    String
+  createdAt   DateTime @default(now())
+
+  asset       VideoAsset @relation(fields: [assetId], references: [id])
+  author      User       @relation(fields: [authorId], references: [id])
+
+  @@index([assetId, bucketIndex]) // High-performance lookup during playback
+}
+
+model FileNode {
+  id        String     @id @default(cuid())
+  name      String
+  parentId  String?    // Points to parent folder
+  isFolder  Boolean
+  storageId String?    // Reference to Supabase Storage object (files only)
+  
+  parent    FileNode?  @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children  FileNode[] @relation("FolderHierarchy")
+
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([parentId])
 }
 
