@@ -130,8 +130,8 @@ export default function LoginPage() {
                                 type="button"
                                 onClick={() => {
                                     setEmail('josh@tobie.team');
-                                    // Custom password
-                                    setPassword('wwgWOHMygZBPoKp8');
+                                    // Password matches seed_manual.sql
+                                    setPassword('TobieAdmin2026!');
                                 }}
                                 className="p-3 rounded-lg bg-white/5 hover:bg-brand-blue/10 hover:border-brand-blue/30 border border-white/10 text-text-secondary hover:text-white transition-all text-left touch-manipulation"
                             >
