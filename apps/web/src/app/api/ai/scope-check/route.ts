@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma';
 import { auth } from '@/lib/auth';
 import { ScopeGuardian } from '@/lib/ai/ScopeGuardian';
 
+export const dynamic = 'force-dynamic';
+
 // Initialize Guardian lazily or safely
 const getGuardian = () => {
     const apiKey = process.env.GEMINI_API_KEY;
