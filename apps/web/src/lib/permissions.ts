@@ -1,4 +1,3 @@
-import { redirect } from 'next/navigation';
 import { cache } from 'react';
 import { auth } from './auth';
 import { prisma } from './prisma';
