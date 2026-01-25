@@ -1,11 +1,14 @@
+import { redirect } from 'next/navigation';
+import { cache } from 'react';
 import { auth } from './auth';
 import { prisma } from './prisma';
 import type { PermissionCode } from '@tobie/shared';
 
 /**
  * Get the current user from the session with role and permissions
+ * Cached per-request in Next.js
  */
-export async function getCurrentUser() {
+export const getCurrentUser = cache(async () => {
     const session = await auth();
 
     if (!session?.user?.id) {
@@ -50,7 +53,7 @@ export async function getCurrentUser() {
         updatedAt: user.updatedAt,
         lastLoginAt: user.lastLoginAt,
     };
-}
+});
 
 /**
  * Check if the current user has a specific permission

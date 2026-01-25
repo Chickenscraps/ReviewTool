@@ -13,35 +13,38 @@ const globalForPrisma = globalThis as unknown as {
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 
+let cachedPrisma: PrismaClient | undefined;
+
 const getPrismaClient = () => {
-    // 1. Check Env (Priority: SUPABASE_DATABASE_URL then DATABASE_URL)
+    // 1. Return cached instance immediately for hot-path speed
+    if (cachedPrisma) return cachedPrisma;
+
+    // Check global (HMR/Serverless warm lambdas)
+    if (globalForPrisma.prisma) {
+        cachedPrisma = globalForPrisma.prisma;
+        return cachedPrisma;
+    }
+
+    // 2. Initialize
     const connectionString = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL;
 
     if (!connectionString) {
-        console.error('PRISMA FATAL: DATABASE_URL and SUPABASE_DATABASE_URL are both missing');
         throw new Error('DATABASE_URL is missing');
     }
 
-    // Masked logging for debugging Netlify environment
-    try {
-        const url = new URL(connectionString);
-        console.log(`PRISMA: Attempting connection to ${url.hostname}:${url.port || '5432'} (Mode: pg-adapter)`);
-    } catch (e) {
-        console.log('PRISMA: Using non-standard connection string format');
-    }
+    // Initialize with pg driver adapter
+    console.log('PRISMA: Initializing new client instance');
+    const pool = new Pool({
+        connectionString,
+        connectionTimeoutMillis: 5000,
+        ssl: { rejectUnauthorized: false }
+    });
+    const adapter = new PrismaPg(pool);
+    const client = new PrismaClient({ adapter });
 
-    // 2. Initialize if needed
-    if (!globalForPrisma.prisma) {
-        console.log('PRISMA: Initializing with pg driver adapter...');
-        const pool = new Pool({
-            connectionString,
-            connectionTimeoutMillis: 5000,
-            ssl: { rejectUnauthorized: false } // Required for Supabase in many environments
-        });
-        const adapter = new PrismaPg(pool);
-        globalForPrisma.prisma = new PrismaClient({ adapter });
-    }
-    return globalForPrisma.prisma;
+    globalForPrisma.prisma = client;
+    cachedPrisma = client;
+    return client;
 };
 
 // The export is a Proxy. It looks like PrismaClient to the app, 

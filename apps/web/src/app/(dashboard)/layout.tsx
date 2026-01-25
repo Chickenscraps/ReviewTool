@@ -11,12 +11,7 @@ export default async function DashboardLayout({
 }: {
     children: React.ReactNode;
 }) {
-    const session = await auth();
-
-    if (!session) {
-        redirect('/login');
-    }
-
+    // getCurrentUser is cached per-request and handles session check internally
     const user = await getCurrentUser();
 
     if (!user) {
