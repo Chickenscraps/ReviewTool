@@ -12,7 +12,7 @@ const globalForPrisma = globalThis as unknown as {
 
 const getPrismaClient = () => {
     // Check if we are in a build phase where we shouldn't connect
-    const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build';
+    // const isBuildPhase = process.env.NEXT_PHASE === 'phase-production-build';
     const hasDbUrl = !!process.env.DATABASE_URL;
 
     // If we're building and don't have a DB, return a "Null Object" or throw a specific warning
