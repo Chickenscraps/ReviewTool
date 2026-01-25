@@ -24,13 +24,9 @@ const getPrismaClient = () => {
     }
 
     if (!globalForPrisma.prisma) {
-        globalForPrisma.prisma = new PrismaClient({
-            datasources: {
-                db: {
-                    url: process.env.DATABASE_URL,
-                },
-            },
-        });
+        // Standard initialization relying on process.env.DATABASE_URL
+        // We already verified it exists above.
+        globalForPrisma.prisma = new PrismaClient();
     }
     return globalForPrisma.prisma;
 };
