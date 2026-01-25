@@ -24,6 +24,7 @@ export async function GET() {
         return NextResponse.json({
             status: 'success',
             connection: 'OK',
+            debugVersion: '2026-01-24-V3',
             userCount,
             adminExists: !!admin,
             envUsed: process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL',
