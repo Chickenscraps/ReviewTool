@@ -19,12 +19,18 @@ const getPrismaClient = () => {
     // But typically, the proxy pattern avoids calling this function until a method is actually called.
 
     if (!hasDbUrl) {
-        // Log critical info but try not to crash unless necessary
-        console.warn('PRISMA: DATABASE_URL is missing. DB access will fail.');
+        console.error('PRISMA FATAL: DATABASE_URL is missing from process.env');
+        throw new Error('DATABASE_URL is missing');
     }
 
     if (!globalForPrisma.prisma) {
-        globalForPrisma.prisma = new PrismaClient();
+        globalForPrisma.prisma = new PrismaClient({
+            datasources: {
+                db: {
+                    url: process.env.DATABASE_URL,
+                },
+            },
+        });
     }
     return globalForPrisma.prisma;
 };
