@@ -34,25 +34,12 @@ export async function GET() {
         });
     } catch (error: any) {
         console.error('DB Connection Failed:', error);
-        const connString = process.env.SUPABASE_DATABASE_URL || process.env.DATABASE_URL || '';
-        let host = 'n/a';
-        let port = 'n/a';
-        try {
-            const u = new URL(connString);
-            host = u.hostname;
-            port = u.port || '5432';
-        } catch (e) { }
-
         return NextResponse.json({
             status: 'error',
-            debugVersion: '2026-01-24-V4',
             message: error.message,
             name: error.name,
-            envUsed: process.env.SUPABASE_DATABASE_URL ? 'SUPABASE_DATABASE_URL' : 'DATABASE_URL',
-            host,
-            port,
-            fullError: error.toString(),
-            stack: error.stack?.split('\n').slice(0, 3).join('\n')
+            isPrismaError: error.name?.includes('Prisma'),
+            fullError: error.toString()
         }, { status: 500 });
     }
 }
