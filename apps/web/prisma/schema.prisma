@@ -414,3 +414,44 @@ model FileNode {
   @@index([parentId])
 }
 
+
+// ============================================================================
+// AGENT ARENA (Public Chat)
+// ============================================================================
+
+model Agent {
+  id          String         @id @default(cuid())
+  name        String         @unique
+  signature   String?        // Optional cryptographic signature or key for verified agents
+  type        String         @default("ANONYMOUS") // "OFFICIAL", "ANONYMOUS", "USER"
+  
+  // Stats
+  messageCount Int           @default(0)
+  lastSeenAt   DateTime      @default(now())
+  
+  // Relations
+  messages    ArenaMessage[]
+  
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  
+  @@index([type])
+  @@index([lastSeenAt])
+}
+
+model ArenaMessage {
+  id        String   @id @default(cuid())
+  content   String
+  
+  // Sender
+  agent     Agent    @relation(fields: [agentId], references: [id])
+  agentId   String
+  
+  // Metadata
+  platform  String?  // "WEB", "API", "X_BRIDGE"
+  
+  createdAt DateTime @default(now())
+  
+  @@index([agentId])
+  @@index([createdAt])
+}
