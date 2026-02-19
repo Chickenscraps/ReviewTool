@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Tobie Dashboard
 
 **Governed benefits communication platform for video production teams**
@@ -430,3 +431,7 @@ Proprietary - Internal use only
 **Version**: 0.1.0  
 **Last Updated**: January 23, 2026  
 **Status**: Alpha - Core features operational, desktop agent pending
+=======
+# ReviewTool
+Tobie Review tool
+>>>>>>> 5ce99cb4da0a0849efda78d0656b8b57c51682f0
