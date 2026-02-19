@@ -37,10 +37,10 @@ model User {
   notifications   Notification[]
   auditLogs       AuditLog[]     @relation("AuditUser")
   chatTranscripts ChatTranscript[] @relation("UserChats")
-  createdVideos   VideoAsset[]   @relation("CreatedVideos")
-  videoComments   VideoComment[] @relation("AuthoredComments")
-  resolvedComments VideoComment[] @relation("ResolvedComments")
-  annotations VideoAnnotation[]
+  createdAssets   Asset[]        @relation("CreatedAssets")
+  comments        Comment[]      @relation("AuthoredComments")
+  resolvedComments Comment[]     @relation("ResolvedComments")
+  annotations     Annotation[]
 
   @@index([email])
   @@index([roleId])
@@ -121,7 +121,7 @@ model Project {
   tasks           Task[]
   files           FileAttachment[]
   chatTranscripts ChatTranscript[] @relation("ProjectChats")
-  videos          VideoAsset[]     @relation("ProjectVideos")
+  assets          Asset[]          @relation("ProjectAssets")
 
   @@index([status])
   @@index([creatorId])
@@ -333,69 +333,128 @@ model ChatTranscript {
 }
 
 // ============================================================================
-// VIDEO REVIEW PORTAL (Future Features)
+// ASSETS & REVIEW (Dual Mode: Static & Video)
 // ============================================================================
 
-model VideoAsset {
-  id           String         @id @default(cuid())
-  projectId    String
-  project      Project        @relation("ProjectVideos", fields: [projectId], references: [id], onDelete: Cascade)
-  title        String
-  publicToken  String?        @unique @default(cuid()) // For client review access
-  version      Int            @default(1)
-  fileUrl      String         // Supabase storage URL
-  thumbnailUrl String?        // Optional thumbnail
-  duration     Float?         // Duration in seconds
-  status       String         @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED
-  createdBy    String
-  creator      User           @relation("CreatedVideos", fields: [createdBy], references: [id])
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  // Relations
-  comments     VideoComment[]
-  annotations VideoAnnotation[]
+enum AssetType {
+  VIDEO
+  IMAGE
+  PDF
+  WEBSITE
+  DOC
+}
 
-  @@unique([projectId, version])
+enum AssetMode {
+  STATIC
+  VIDEO
+}
+
+model Asset {
+  id           String      @id @default(cuid())
+  projectId    String
+  project      Project     @relation("ProjectAssets", fields: [projectId], references: [id], onDelete: Cascade)
+  title        String
+  type         AssetType   @default(VIDEO)
+  mode         AssetMode   @default(VIDEO)
+  
+  // Storage & Access
+  publicToken  String?     @unique @default(cuid()) // For client review
+  storagePath  String?     // Supabase storage path
+  mimeType     String?
+  
+  // Metadata
+  version      Int         @default(1)
+  versions     AssetVersion[]
+  
+  // Current Version Cache
+  fileUrl      String      // Signed URL or public URL
+  thumbnailUrl String?
+  duration     Float?      // Video duration
+  
+  status       String      @default("PENDING") // PENDING, UNDER_REVIEW, APPROVED
+  
+  createdBy    String
+  creator      User        @relation("CreatedAssets", fields: [createdBy], references: [id])
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  // Relations
+  comments     Comment[]
+  annotations  Annotation[]
+
+  @@unique([projectId, version, title]) // looser constraint than before?
   @@index([projectId])
   @@index([status])
   @@index([createdBy])
   @@index([publicToken])
 }
 
-model VideoComment {
-  id           String     @id @default(cuid())
-  videoId      String
-  video        VideoAsset @relation(fields: [videoId], references: [id], onDelete: Cascade)
-  timestamp    Float      // Time in seconds (e.g., 45.5 for 0:45.5)
-  content      String     // The feedback text
-  authorId     String
-  author       User       @relation("AuthoredComments", fields: [authorId], references: [id])
-  isOutOfScope Boolean    @default(false) // AI-flagged as out of scope
-  resolved     Boolean    @default(false)
-  resolvedBy   String?
-  resolver     User?      @relation("ResolvedComments", fields: [resolvedBy], references: [id])
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-
-  @@index([videoId])
-  @@index([authorId])
-  @@index([timestamp])
-  @@index([resolved])
+model AssetVersion {
+  id              String   @id @default(cuid())
+  assetId         String
+  asset           Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  versionNumber   Int
+  
+  storagePath     String
+  renderManifest  Json?    // { pages: [...], duration: ... }
+  
+  createdAt       DateTime @default(now())
+  
+  @@unique([assetId, versionNumber])
 }
 
-model VideoAnnotation {
+model Comment {
+  id           String    @id @default(cuid())
+  assetId      String
+  asset        Asset     @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  
+  // Temporal (Video)
+  timestamp    Float?    // Seconds
+  
+  // Spatial (Static) - optional, linked to annotation usually
+  annotationId String?
+  
+  content      String
+  
+  authorId     String
+  author       User      @relation("AuthoredComments", fields: [authorId], references: [id])
+  
+  isResolved   Boolean   @default(false)
+  resolvedBy   String?
+  resolver     User?     @relation("ResolvedComments", fields: [resolvedBy], references: [id])
+  
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([assetId])
+  @@index([authorId])
+}
+
+model Annotation {
   id          String   @id @default(cuid())
   assetId     String
-  bucketIndex Int      // The quantized time bucket
-  timeCode    Float    // Exact timestamp for reference
-  canvasData  Json     // Serialized Fabric.js object
+  asset       Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  
+  // Temporal (Video)
+  timeStart   Float?   // Seconds
+  timeEnd     Float?
+  
+  // Spatial (Static)
+  pageIndex   Int      @default(0)
+  x           Float?   // Normalized 0-1
+  y           Float?
+  width       Float?
+  height      Float?
+  
+  // Content
+  color       String   @default("#FF0000")
+  comment     String?
+  
   authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
   createdAt   DateTime @default(now())
 
-  asset       VideoAsset @relation(fields: [assetId], references: [id])
-  author      User       @relation(fields: [authorId], references: [id])
-
-  @@index([assetId, bucketIndex]) // High-performance lookup during playback
+  @@index([assetId])
 }
 
 model FileNode {

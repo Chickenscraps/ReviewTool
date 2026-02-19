@@ -351,21 +351,71 @@ async function main() {
     });
 
     // ============================================================================
-    // VIDEO ASSETS
+    // ASSETS (Video & Static)
     // ============================================================================
-    console.log('Creating sample video asset...');
+    console.log('Creating sample assets...');
 
-    await prisma.videoAsset.upsert({
+    // 1. Video Asset
+    await prisma.asset.upsert({
         where: { publicToken: 'sample-video-token' },
         update: {},
         create: {
             title: 'Q1 Motion Graphics Draft',
             projectId: demoProject.id,
+            type: 'VIDEO',
+            mode: 'VIDEO',
             publicToken: 'sample-video-token',
             version: 1,
             fileUrl: '/samples/motion_example.mp4',
+            duration: 125.5, // 2m 05s
             status: 'UNDER_REVIEW',
             createdBy: josh.id,
+            comments: {
+                create: [
+                    {
+                        content: "Great start! The timing feels a bit off here.",
+                        timestamp: 15.5,
+                        authorId: ann.id,
+                    },
+                    {
+                        content: "Can we make the logo bigger?",
+                        timestamp: 45.0,
+                        authorId: josh.id,
+                        isResolved: true,
+                        resolvedBy: ann.id,
+                    }
+                ]
+            }
+        },
+    });
+
+    // 2. Static Asset (Image/PDF)
+    await prisma.asset.upsert({
+        where: { publicToken: 'sample-static-token' },
+        update: {},
+        create: {
+            title: 'Storyboard - Scene 1',
+            projectId: demoProject.id,
+            type: 'IMAGE',
+            mode: 'STATIC',
+            publicToken: 'sample-static-token',
+            version: 1,
+            fileUrl: 'https://images.unsplash.com/photo-1626785774573-4b79931bfd93?auto=format&fit=crop&q=80&w=2000',
+            status: 'PENDING',
+            createdBy: ann.id,
+            annotations: {
+                create: [
+                    {
+                        pageIndex: 0,
+                        x: 0.2,
+                        y: 0.3,
+                        width: 0.1,
+                        height: 0.1,
+                        authorId: josh.id,
+                        comment: "Is this character final?"
+                    }
+                ]
+            }
         },
     });
 
