@@ -1,5 +1,4 @@
 import { redirect } from 'next/navigation';
-import { prisma } from '@tobie/shared'; // Assuming shared prisma instance, or we import locally if monorepo setup varies
 // Fallback to local prisma if shared package isn't set up perfectly in this environment
 import { PrismaClient } from '@prisma/client';
 
